@@ -2,8 +2,8 @@
 
 This is my hacky fork of https://github.com/chjj/slock, which is a fork of
 suckless slock. Read chjj's README.md for more information. My fork adds a cool
-lock icon and shows asterisks when you type your password.
+lock icon and shows asterisks when you type your password. It uses a color from
+your .Xresources if you have one.
 
 Here's how it looks:
-
 ![example of ebin-slock being used](./slocked.png)
