@@ -26,20 +26,20 @@ ebin-slock:
 
 clean:
 	@echo cleaning
-	@rm -f ebin-slock ${OBJ} slock-${VERSION}.tar.gz
+	@rm -f ebin-slock ${OBJ} ebin-slock-${VERSION}.tar.gz
 
 dist: clean
 	@echo creating dist tarball
-	@mkdir -p slock-${VERSION}
-	@cp -R LICENSE Makefile README config.mk ${SRC} slock-${VERSION}
-	@tar -cf slock-${VERSION}.tar slock-${VERSION}
-	@gzip slock-${VERSION}.tar
-	@rm -rf slock-${VERSION}
+	@mkdir -p ebin-slock-${VERSION}
+	@cp -R LICENSE Makefile README config.mk ${SRC} ebin-slock-${VERSION}
+	@tar -cf ebin-slock-${VERSION}.tar ebin-slock-${VERSION}
+	@gzip ebin-slock-${VERSION}.tar
+	@rm -rf ebin-slock-${VERSION}
 
 install: all
 	@echo installing executable file to ${DESTDIR}${PREFIX}/bin
 	@mkdir -p ${DESTDIR}${PREFIX}/bin
-	@cp -f slock ${DESTDIR}${PREFIX}/bin
+	@cp -f ebin-slock ${DESTDIR}${PREFIX}/bin
 	@chmod 755 ${DESTDIR}${PREFIX}/bin/ebin-slock
 	@chmod u+s ${DESTDIR}${PREFIX}/bin/ebin-slock
 
