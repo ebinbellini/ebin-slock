@@ -6,4 +6,4 @@ lock icon and shows asterisks when you type your password.
 
 Here's how it looks:
 
-![example of ebin-slock being used](./example.png)
+![example of ebin-slock being used](./slocked.png)
