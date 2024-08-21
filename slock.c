@@ -16,52 +16,44 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <X11/keysym.h>
-#include <X11/Xlib.h>
-#include <X11/Xutil.h>
 #include <X11/Xatom.h>
+#include <X11/Xlib.h>
+#include <X11/Xresource.h>
+#include <X11/Xutil.h>
+#include <time.h>
+#include <crypt.h>
 
 #if HAVE_BSD_AUTH
 #include <login_cap.h>
 #include <bsd_auth.h>
 #endif
 
-#include "imgur.h"
-#include "twilio.h"
+#include "drw/drw.h"
+#include "drw/util.h"
 
 #define CMD_LENGTH 500
+#define LENGTH(X)  (sizeof X / sizeof X[0])
 
-#define POWEROFF 1
-#define USBOFF 1
+#define POWEROFF 0
+#define USBOFF 0
 #define STRICT_USBOFF 0
-#define TWILIO_SEND 1
+#define TWILIO_SEND 0
 #define WEBCAM_SHOT 1
 #define IMGUR_UPLOAD 0
 #define PLAY_AUDIO 1
-#define TRANSPARENT 1
 
 char *g_pw = NULL;
 int lock_tries = 0;
 
 typedef struct {
-  int screen;
-  Window root, win;
-  Pixmap pmap;
-  unsigned long colors[2];
-} Lock;
+    char* name;
+    char** dst;
+} ColorPreference;
 
-static Lock **locks;
+static Drw **locks;
+static Fnt *font;
 static int nscreens;
 static Bool running = True;
-
-static void
-die(const char *errstr, ...) {
-  va_list ap;
-
-  va_start(ap, errstr);
-  vfprintf(stderr, errstr, ap);
-  va_end(ap);
-  exit(EXIT_FAILURE);
-}
 
 #ifdef __linux__
 #include <fcntl.h>
@@ -262,12 +254,16 @@ webcam_shot(int async) {
 #if WEBCAM_SHOT
   char cmd[CMD_LENGTH];
 
+  time_t tt = time(NULL);
+  struct tm t = *localtime(&tt);
+
   int r = snprintf(
     cmd,
     CMD_LENGTH,
     "ffmpeg -y -loglevel quiet -f video4linux2 -i /dev/video0"
-    " -frames:v 1 -f image2 %s/slock.jpg%s",
+    " -frames:v 1 -f image2 %s/Images/loginattempts/%d-%02d-%02d_%02d:%02d:%02d.jpg%s",
     getenv("HOME"),
+    t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec,
     async ? " &" : ""
   );
 
@@ -495,6 +491,42 @@ play_alarm(int async) {
 }
 
 static void
+draw(Drw *drw, int pwdlen)
+{
+  XClearWindow(drw->dpy, drw->root);
+
+  const int w = drw->w;
+  const int h = drw->h;
+
+  char buf[255] = "";
+  int i;
+  for (i = 0; i < sizeof (buf) - 2 && i < pwdlen; i++)
+    buf[i] = '*';
+  buf[i+1] = '\0';
+
+  // Draw lock icon
+  const int lockwidth = 200;
+  const int lockheight = lockwidth * 3 / 4;
+  // Lock contour
+  drw_rect(drw, w/2 - lockwidth/2, h/2 - lockheight / 2, lockwidth, lockheight, 0, 1);
+  // Keyhole square
+  drw_rect(drw, w/2-lockwidth/8.4, h/2+lockwidth/32, lockwidth/4.2, lockwidth/4, 0, 1);
+  drw_rect(drw, w/2-lockwidth/8+4, h/2+lockwidth/32-2, lockwidth/4 - 8, 8, 1, 0);
+  // Lock bar arc
+	XSetForeground(drw->dpy, drw->gc, drw->scheme[ColBg].pixel);
+  XDrawArc(drw->dpy, drw->drawable, drw->gc, w/2-lockwidth/3, h/2-lockheight/2 - lockwidth/3, lockwidth/1.5, lockwidth/1.5, -0, 180 * 64);
+  // Keyhole arc
+  XDrawArc(drw->dpy, drw->drawable, drw->gc, w/2-lockwidth/6, h/2 - lockwidth/4, lockwidth/3, lockwidth/3, -45 * 64, 45 * 6 * 64);
+
+  // Draw *******
+  unsigned int text_w = drw_fontset_getwidth(drw, buf);
+  drw_rect(drw, w/2-500, h/2 + lockwidth * 0.8, 1000, 50, 1, 0);
+  drw_text(drw, w/2-text_w/2, h/2 + lockwidth * 0.8, text_w, 50, 0, buf, 1);
+
+  drw_map(drw, drw->root, 0, 0, w, h);
+}
+
+static void
 #ifdef HAVE_BSD_AUTH
 readpw(Display *dpy)
 #else
@@ -504,13 +536,15 @@ readpw(Display *dpy, const char *pws)
   char buf[32], passwd[256];
   int num, screen;
   unsigned int len = 0;
-#if !TRANSPARENT
-  unsigned int llen = 0;
-#endif
   KeySym ksym;
   XEvent ev;
 
   running = True;
+
+  for (screen = 0; screen < nscreens; screen++) {
+    // Draw empty screen
+    draw(locks[screen], 0);
+  }
 
   // As "slock" stands for "Simple X display locker", the DPMS settings
   // had been removed and you can set it with "xset" or some other
@@ -519,7 +553,7 @@ readpw(Display *dpy, const char *pws)
   while (running && !XNextEvent(dpy, &ev)) {
     if (ev.type != KeyPress) {
       for (screen = 0; screen < nscreens; screen++)
-        XRaiseWindow(dpy, locks[screen]->win);
+        XRaiseWindow(dpy, locks[screen]->root);
       continue;
     }
 
@@ -538,7 +572,8 @@ readpw(Display *dpy, const char *pws)
         || IsKeypadKey(ksym)
         || IsMiscFunctionKey(ksym)
         || IsPFKey(ksym)
-        || IsPrivateKeypadKey(ksym)) {
+        || IsPrivateKeypadKey(ksym)
+        || IsModifierKey(ksym)) {
       continue;
     }
 
@@ -557,6 +592,8 @@ readpw(Display *dpy, const char *pws)
         }
 
         if (running) {
+          // Take a webcam shot of whoever is tampering with our machine:
+          webcam_shot(0);
           XBell(dpy, 100);
           lock_tries++;
 
@@ -564,9 +601,6 @@ readpw(Display *dpy, const char *pws)
           if (lock_tries > 5) {
             // Disable alt+sysrq and ctrl+alt+backspace
             disable_kill();
-
-            // Take a webcam shot of whoever is tampering with our machine:
-            webcam_shot(0);
 
             // Upload the image:
             char *link, *hash;
@@ -590,13 +624,6 @@ readpw(Display *dpy, const char *pws)
             // If we failed, loop forever.
             for (;;)
               sleep(1);
-          } else {
-            // Take a webcam shot of whoever
-            // is tampering with our machine.
-            webcam_shot(1);
-
-            // Send an SMS via twilio.
-            twilio_send("Bad screenlock password.", NULL, 1);
           }
 
           // Play a siren if there are more than 2 bad
@@ -684,164 +711,145 @@ readpw(Display *dpy, const char *pws)
       }
     }
 
-#if !TRANSPARENT
-    if (llen == 0 && len != 0) {
-      for (screen = 0; screen < nscreens; screen++) {
-        XSetWindowBackground(
-          dpy,
-          locks[screen]->win,
-          locks[screen]->colors[1]
-        );
-        XClearWindow(dpy, locks[screen]->win);
-      }
-    } else if (llen != 0 && len == 0) {
-      for (screen = 0; screen < nscreens; screen++) {
-        XSetWindowBackground(
-          dpy,
-          locks[screen]->win,
-          locks[screen]->colors[0]
-        );
-        XClearWindow(dpy, locks[screen]->win);
-      }
+    for (screen = 0; screen < nscreens; screen++) {
+      draw(locks[screen], len);
     }
-
-    llen = len;
-#endif
   }
 }
 
 static void
-unlockscreen(Display *dpy, Lock *lock) {
+unlockscreen(Display *dpy, Drw *drw) {
   usbon();
 
-  if (dpy == NULL || lock == NULL)
+  if (dpy == NULL || drw == NULL)
     return;
 
   XUngrabPointer(dpy, CurrentTime);
 
-#if !TRANSPARENT
-  XFreeColors(dpy, DefaultColormap(dpy, lock->screen), lock->colors, 2, 0);
-  XFreePixmap(dpy, lock->pmap);
-#endif
+  XDestroyWindow(dpy, drw->root);
 
-  XDestroyWindow(dpy, lock->win);
-
-  free(lock);
+  drw_free(drw);
 }
 
-static Lock *
+static Drw *
 lockscreen(Display *dpy, int screen) {
   unsigned int len;
-  Lock *lock;
   XSetWindowAttributes wa;
 
   if (dpy == NULL || screen < 0)
     return NULL;
 
-  lock = malloc(sizeof(Lock));
-
-  if (lock == NULL)
-    return NULL;
-
-  lock->screen = screen;
-
-  lock->root = RootWindow(dpy, lock->screen);
-
-#if TRANSPARENT
-  XVisualInfo vi;
-  XMatchVisualInfo(dpy, DefaultScreen(dpy), 32, TrueColor, &vi);
-  wa.colormap = XCreateColormap(
-    dpy,
-    DefaultRootWindow(dpy),
-    vi.visual,
-    AllocNone
-  );
-#endif
-
   // init
   wa.override_redirect = 1;
-#if !TRANSPARENT
-  wa.background_pixel = BlackPixel(dpy, lock->screen);
-#else
+  wa.background_pixel = BlackPixel(dpy, screen);
   wa.border_pixel = 0;
-  wa.background_pixel = 0xaa000000;
-#endif
+  int field = CWOverrideRedirect | CWBackPixel | CWBorderPixel;
 
-#if !TRANSPARENT
-  int field = CWOverrideRedirect | CWBackPixel;
-  lock->win = XCreateWindow(
+  Window root = DefaultRootWindow(dpy);
+  Window win = win = XCreateWindow(
     dpy,
-    lock->root,
+    root,
     0,
     0,
-    DisplayWidth(dpy, lock->screen),
-    DisplayHeight(dpy, lock->screen),
+    DisplayWidth(dpy, screen),
+    DisplayHeight(dpy, screen),
     0,
-    DefaultDepth(dpy, lock->screen),
+    DefaultDepth(dpy, screen),
     CopyFromParent,
-    DefaultVisual(dpy, lock->screen),
+    DefaultVisual(dpy, screen),
     field,
     &wa
   );
-#else
-  int field = CWOverrideRedirect | CWBackPixel | CWColormap | CWBorderPixel;
-  lock->win = XCreateWindow(
-    dpy,
-    lock->root,
-    0,
-    0,
-    DisplayWidth(dpy, lock->screen),
-    DisplayHeight(dpy, lock->screen),
-    0,
-    vi.depth,
-    CopyFromParent,
-    vi.visual,
-    field,
-    &wa
-  );
-#endif
 
+  // Init suckless drw library
+  int w = DisplayWidth(dpy, screen);
+  int h = DisplayHeight(dpy, screen);
+  Drw *drw = drw_create(dpy, screen, win, w, h);
+
+  XSetLineAttributes(dpy, drw->gc, 5, LineSolid, CapButt, JoinMiter);
+
+  static char* col_background = "#000000";
+  //static char* col_foreground = "#f8a235";
+  static char* col_foreground = "#ffffff";
+
+  // Try to get colors from .Xresources
+	XrmInitialize();
+  char *resource_manager = XResourceManagerString(drw->dpy);
+	if (resource_manager != NULL) {
+    XrmDatabase db = XrmGetStringDatabase(resource_manager);
+
+    ColorPreference c_prefs[] = {
+      { "foreground", &col_background },
+      { "color11", &col_foreground },
+    };
+
+    ColorPreference *c;
+    for (c = c_prefs; c < c_prefs + LENGTH(c_prefs); c++) {
+      char *type;
+      XrmValue value;
+      char fullname[256];
+      char fullclass[256];
+      snprintf(fullname, sizeof(fullname), "%s.%s", "slock", c->name);
+      snprintf(fullclass, sizeof(fullclass), "%s.%s", "Slock", c->name);
+      fullname[sizeof(fullname) - 1] = fullclass[sizeof(fullclass) - 1] = '\0';
+      XrmGetResource(db, fullname, fullclass, &type, &value);
+      if (value.addr != NULL && !strncmp("String", type, 64)) {
+        *c->dst = value.addr;
+      }
+    }
+  }
+
+  char * palette[] = { col_background, col_foreground };
+  drw->scheme = drw_scm_create(drw, (const char **)palette, 2);
+  drw_setscheme(drw, drw->scheme);
+
+  unsigned long black, white;
+  black = BlackPixel(dpy, screen);
+  white = WhitePixel(dpy, screen);
+  XSetBackground(drw->dpy, drw->gc, black);
+  XSetForeground(drw->dpy, drw->gc, white);
+
+  XSelectInput(dpy, win, ExposureMask|ButtonPressMask|KeyPressMask);
+  XClearWindow(drw->dpy, drw->root);
+  XMapRaised(drw->dpy, drw->root);
+
+  static const char *fontlist[] = { "Atari ST 8x16 System Font:pixelsize=40" };
+  font = drw_fontset_create(drw, fontlist, LENGTH(fontlist));
+
+  field = CWOverrideRedirect | CWBackPixel;
   Atom name_atom = XA_WM_NAME;
   XTextProperty name_prop = { "slock", name_atom, 8, 5 };
-  XSetWMName(dpy, lock->win, &name_prop);
+  XSetWMName(dpy, drw->root, &name_prop);
 
   XClassHint *hint = XAllocClassHint();
   if (hint) {
     hint->res_name = "slock";
     hint->res_class = "slock";
-    XSetClassHint(dpy, lock->win, hint);
+    XSetClassHint(dpy, drw->root, hint);
     XFree(hint);
   }
 
-#if !TRANSPARENT
+  // Hide cursor
   Cursor invisible;
   XColor color, dummy;
   char curs[] = {0, 0, 0, 0, 0, 0, 0, 0};
-  int cmap = DefaultColormap(dpy, lock->screen);
-
-  XAllocNamedColor(dpy, cmap, COLOR2, &color, &dummy);
-  lock->colors[1] = color.pixel;
-
-  XAllocNamedColor(dpy, cmap, COLOR1, &color, &dummy);
-  lock->colors[0] = color.pixel;
-
-  lock->pmap = XCreateBitmapFromData(dpy, lock->win, curs, 8, 8);
-
+  int cmap = DefaultColormap(dpy, drw->screen);
+  XAllocNamedColor(dpy, cmap, "black", &color, &dummy);
+  Pixmap pmap = XCreateBitmapFromData(dpy, drw->root, curs, 8, 8);
   invisible = XCreatePixmapCursor(
-    dpy, lock->pmap, lock->pmap, &color, &color, 0, 0);
+    dpy, pmap, pmap, &color, &color, 0, 0);
+  XDefineCursor(dpy, drw->root, invisible);
 
-  XDefineCursor(dpy, lock->win, invisible);
-#endif
-
-  XMapRaised(dpy, lock->win);
+  XMapRaised(dpy, drw->root);
+  XFreeColors(dpy, DefaultColormap(dpy, drw->screen), &color.pixel, 1, 0);
+  XFreeColors(dpy, DefaultColormap(dpy, drw->screen), &dummy.pixel, 1, 0);
 
   for (len = 1000; len > 0; len--) {
     int field = ButtonPressMask | ButtonReleaseMask | PointerMotionMask;
 
-#if !TRANSPARENT
     int grab = XGrabPointer(
       dpy,
-      lock->root,
+      drw->root,
       False,
       field,
       GrabModeAsync,
@@ -850,19 +858,6 @@ lockscreen(Display *dpy, int screen) {
       invisible,
       CurrentTime
     );
-#else
-    int grab = XGrabPointer(
-      dpy,
-      lock->root,
-      False,
-      field,
-      GrabModeAsync,
-      GrabModeAsync,
-      None,
-      None,
-      CurrentTime
-    );
-#endif
 
     if (grab == GrabSuccess)
       break;
@@ -874,7 +869,7 @@ lockscreen(Display *dpy, int screen) {
     for (len = 1000; len; len--) {
       int grab = XGrabKeyboard(
         dpy,
-        lock->root,
+        drw->root,
         True,
         GrabModeAsync,
         GrabModeAsync,
@@ -891,14 +886,14 @@ lockscreen(Display *dpy, int screen) {
   running &= (len > 0);
 
   if (!running) {
-    unlockscreen(dpy, lock);
-    lock = NULL;
+    unlockscreen(dpy, drw);
+    drw = NULL;
   } else {
-    XSelectInput(dpy, lock->root, SubstructureNotifyMask);
+    XSelectInput(dpy, drw->root, SubstructureNotifyMask);
     usboff();
   }
 
-  return lock;
+  return drw;
 }
 
 static void
@@ -964,7 +959,7 @@ main(int argc, char **argv) {
   nscreens = ScreenCount(dpy);
 
   errno = 0;
-  locks = malloc(sizeof(Lock *) * nscreens);
+  locks = malloc(sizeof(Drw *) * nscreens);
 
   if (locks == NULL)
     die("slock: malloc: %s\n", strerror(errno));

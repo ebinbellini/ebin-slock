@@ -10,11 +10,15 @@ X11INC = /usr/X11R6/include
 X11LIB = /usr/X11R6/lib
 
 # includes and libs
-INCS = -I. -I/usr/include -I${X11INC}
-LIBS = -L/usr/lib -lc -lcrypt -L${X11LIB} -lX11 -lXext
+INCS = -I. -I/usr/include -I${X11INC} -I/usr/include/freetype2 \
+	-I/usr/include/libpng16 -I/usr/include/harfbuzz -I/usr/include/glib-2.0 \
+	-I/usr/lib/glib-2.0/include -I/usr/include/sysprof-6 -pthread
+
+LIBS = -L/usr/lib -lc -lcrypt -L${X11LIB} -lX11 -lXext \
+	-lXft -lfontconfig -lfreetype -lm -lImlib2
 
 # flags
-CPPFLAGS = -DVERSION=\"${VERSION}\" -DHAVE_SHADOW_H -DCOLOR1=\"black\" -DCOLOR2=\"\#005577\"
+CPPFLAGS = -DVERSION=\"${VERSION}\" -DHAVE_SHADOW_H
 CFLAGS = -std=c99 -pedantic -Wall -Os ${INCS} ${CPPFLAGS}
 LDFLAGS = -s ${LIBS}
 

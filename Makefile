@@ -3,10 +3,10 @@
 
 include config.mk
 
-SRC = slock.c
-OBJ = ${SRC:.c=.o}
+SRC = slock.c drw/drw.c drw/util.c
+OBJ = slock.o drw.o util.o
 
-all: options slock
+all: options ebin-slock
 
 options:
 	@echo slock build options:
@@ -20,13 +20,13 @@ options:
 
 ${OBJ}: config.mk
 
-slock: ${OBJ}
-	@echo CC -o $@
-	@${CC} -o $@ ${OBJ} ${LDFLAGS}
+ebin-slock:
+	@echo ${CC} -o $@ ${SRC} ${LDFLAGS} ${CFLAGS}
+	@${CC} -o $@ ${SRC} ${LDFLAGS} ${CFLAGS}
 
 clean:
 	@echo cleaning
-	@rm -f slock ${OBJ} slock-${VERSION}.tar.gz
+	@rm -f ebin-slock ${OBJ} slock-${VERSION}.tar.gz
 
 dist: clean
 	@echo creating dist tarball
@@ -40,11 +40,11 @@ install: all
 	@echo installing executable file to ${DESTDIR}${PREFIX}/bin
 	@mkdir -p ${DESTDIR}${PREFIX}/bin
 	@cp -f slock ${DESTDIR}${PREFIX}/bin
-	@chmod 755 ${DESTDIR}${PREFIX}/bin/slock
-	@chmod u+s ${DESTDIR}${PREFIX}/bin/slock
+	@chmod 755 ${DESTDIR}${PREFIX}/bin/ebin-slock
+	@chmod u+s ${DESTDIR}${PREFIX}/bin/ebin-slock
 
 uninstall:
 	@echo removing executable file from ${DESTDIR}${PREFIX}/bin
-	@rm -f ${DESTDIR}${PREFIX}/bin/slock
+	@rm -f ${DESTDIR}${PREFIX}/bin/ebin-slock
 
 .PHONY: all options clean dist install uninstall
